@@ -1,63 +1,58 @@
-from igraph import *
 from openpyxl import *
 from report import Report
-
+import networkx as nx
+'''
+   GraphManager: Class to handle graph operations, reading, writing, traversal
+   Fields:
+    graph: The networkx graph on which to perform operations
+   Methods:
+    addPDC(pdc_list): adds the specified PDC list to the graph and updates fuse rating
+    addReport(): adds the specified report object to the graph, creating edges between from
+        and to (component, pin) combinations
+    with attributes
+    findSplices(): finds loops in a directed graph. W.I.P.
+'''
 class GraphManager:
 
     def __init__(self):
-        self.g = Graph()
-        self.g.add_vertex(name="dummy")
-        #add dummy vertex to avoid errors when adding to empty graph
-        self.has_dummy = 1
+        self.g = nx.Graph()
 
-    # Adds data from a fuse map to a graph. Assumes that the first row is
-    #   a header, and all others contain pin data. Graph must not be empty.
-    # g: Graph to add vertices to.
-    # wb_path: Path object pointing to workbook containing fuse map.
-    # conn_col: Letter of column containing connector information.
-    # pin_col: Letter of column conatining pin information.
-    # fuse_col: Letter of column containing fuse rating.
-    def add_pdc(self, fusemap):
 
-        for row in fusemap:
+    #addPDC(pdc_list)
+    #pdc_list: list of dictionaries of pdc returned from InputParser.readPDC()
+    # Adds data from a fuse map list to the graph.
+    #updates fuse_rating attribute if nodes already exist
+    def addPDC(self, pdc_list):
+
+        for row in pdc_list:
             #get vertex information
             vconn = row['CONNECTOR'][0]
             vpin = row['CONNECTOR'][1]
             vname = vconn + "|" + vpin
             vfuse = int(row["FUSE"])
             #if vertex doesn't exist, create it
-            if len(self.g.vs.select(name=vname)) == 0:
-                self.g.add_vertex(name=vname, connector=vconn, pin=vpin, fuse_rating=vfuse)
+            if vname not in self.g:
+                self.g.add_node(vname, connector=vconn, pin=vpin, fuse_rating=vfuse)
             else: #if vertex exists, update fuse rating
-                self.g.vs.find(name=vname).update_attributes({'fuse_rating':vfuse})
-        #delete dummy vertex if it exists
-        if self.has_dummy > 1:
-            self.g.vs.find(name="dummy").delete()
-            self.g.has_dummy = 0
+                self.g.nodes[vname]['fuse_rating'] = vfuse
+
         print('added  pdc to graph')
 
-    # Adds data from a wire report to a graph. Assumes that the first row is
-    #   a header, and all others contain pin data. Graph must not be empty.
-    # g: Graph to add data to.
-    # wb_path: Path object pointing to workbook containing wire report.
-    # fc_col: Letter of column containing from connector.
-    # fp_col: Letter of column conatining from pin.
-    # tc_col: Letter of column containing to connector.
-    # tp_col: Letter of column conatining to pin.
-    # wirename_col: Letter of column containing wire name.
-    # csa_col: Letter of column containing cross-sectional area.
-    def add_report(self, report):
+    #addReport(report)
+    #report: report object to add (from InputParser.readReport())
+    # Adds nodes from a wire report object to the graph. Graph cannot be empty.
+    # adds wires between nodes in the report, updating wire csa and wire description
+    def addReport(self, report):
 
-        contents = report.sheet_list
+        contents = report.getContents()
 
         for row in contents:
             f_tup = row["FROM"]
             t_tup = row["TO"]
-            desc = row["DESC"]
-            ecsa = row["CSA"]
-
+            desc_col = row["DESC"]
+            csa_col = row["CSA"]
             #get vertex information
-            fconn = f_tup[0]
+            fconn = str(f_tup[0])
             fpin = str(f_tup[1])
             fname = fconn + "|" + fpin
             tconn = str(t_tup[0])
@@ -65,29 +60,34 @@ class GraphManager:
             tname = tconn + "|" + tpin
 
             #create vertices that don't exist
-            if len(self.g.vs) == 0:
-                self.g.add_vertex(name=fname, connector=fconn, pin=fpin, fuse_rating=0.0)
-            elif len(self.g.vs.select(name=fname)) == 0:
-                self.g.add_vertex(name=fname, connector=fconn, pin=fpin, fuse_rating=0.0)
-            if len(self.g.vs.select(name=tname)) == 0:
-                self.g.add_vertex(name=tname, connector=tconn, pin=tpin, fuse_rating=0.0)
+            if fname not in self.g:
+                self.g.add_node(fname, connector=fconn, pin=fpin, fuse_rating=-1)
+            if tname not in self.g:
+                self.g.add_node(tname, connector=tconn, pin=tpin, fuse_rating=-1)
 
-            #create edge
-            self.g.add_edge(fname, tname, wire=desc, csa=ecsa)
+            #get edge information
+            ewire = desc_col
+            ecsa = csa_col
+
+            #create wire between the two components
+            self.g.add_edge(fname, tname, wire=ewire, csa=ecsa)
 
         print('added ', report.filename, ' to graph')
 
-    def find_splices(self, i=0, tracking_list=[]):
+    #findSplices(report)
+    #TODO: only works on directed graphs
+    #Work in progress
+    def findSplices(self, i=0, tracking_list=[]):
         if(i in tracking_list):
             print("loop detected starting at ", i)
             return
         tracking_list.append(i)
         neighbors = self.g.neighbors(i, mode="out")
-        
+
         if len(neighbors) > 1:
             print("splice with ", i, "to ", neighbors)
             for x in neighbors:
-                self.find_splices(x, tracking_list)
+                self.findSplices(x, tracking_list)
         elif len(neighbors) == 1:
             print(neighbors)
             self.find_splices(neighbors[0], tracking_list)
